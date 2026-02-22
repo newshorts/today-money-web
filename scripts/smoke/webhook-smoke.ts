@@ -40,9 +40,10 @@ async function main() {
 
   const latestItem = activeItems.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
   let webhookItemId = latestItem.id;
+  let dbToken: { plaidItemId: string; accessToken: string } | null = null;
 
   try {
-    const dbToken = await fetchPlaidTokenForItem(session.user.id, latestItem.id);
+    dbToken = await fetchPlaidTokenForItem(session.user.id, latestItem.id);
     webhookItemId = dbToken.plaidItemId;
   } catch (error) {
     console.warn(
@@ -81,10 +82,20 @@ async function main() {
   if (process.env.RUN_SIGNED_WEBHOOK_TESTS === "true") {
     step("Stage B: fire signed webhooks from Plaid sandbox");
 
-    const dbToken = await fetchPlaidTokenForItem(session.user.id, latestItem.id);
+    let signedWebhookAccessToken = dbToken?.accessToken;
+    if (!signedWebhookAccessToken) {
+      console.warn(
+        "DB token lookup unavailable for signed webhook tests; creating standalone sandbox item for signed webhook firing.",
+      );
+      const signedPublicToken = await createSandboxPublicToken(plaidClient);
+      const exchange = await plaidClient.itemPublicTokenExchange({
+        public_token: signedPublicToken,
+      });
+      signedWebhookAccessToken = exchange.data.access_token;
+    }
 
     for (const code of getWebhookCodes()) {
-      await fireSandboxWebhook(plaidClient, dbToken.accessToken, code);
+      await fireSandboxWebhook(plaidClient, signedWebhookAccessToken, code);
       pass(`Plaid sandbox fire webhook (${code}) accepted`);
       await sleep(2000);
     }

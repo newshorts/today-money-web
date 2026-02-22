@@ -13,6 +13,16 @@ It is the **source of truth** for:
 
 ---
 
+## Codex rules
+
+- Never run docker, docker compose, cloudflared, or edit any *-platform* / root infra files.
+- Assume Postgres already exists at db_todaymoney:5432 on todaymoney_net.
+- If DB isn’t reachable, report the failure and stop; don’t attempt to “fix infra”.
+- Only run app-local commands: npm test, npm run dev, migrations, lint.
+- The Dockerfile.dev is very fragile. Do not modify. If a change is needed, stop and ask the user to implement manually.
+
+---
+
 ## Production Domain + Required Routes
 
 - Primary domain: `today.money`
@@ -43,7 +53,7 @@ Default `DATABASE_URL` to use:
 postgresql://today:money@db_todaymoney:5432/todaymoney?schema=public
 ```
 
-The web container must share a docker network with `db_todaymoney` so that hostname resolves.
+The web container must share a docker network with `db_todaymoney` so that hostname resolves. The network name is `todaymoney_net`
 
 ---
 

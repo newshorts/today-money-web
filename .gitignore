@@ -20,6 +20,12 @@ lerna-debug.log*
 .env
 .env.*
 !.env.example
+.envrc
+.direnv/
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
 # OS / Editor
 .DS_Store
@@ -42,8 +48,12 @@ test-results/
 # Build artifacts
 dist/
 build/
+*.tsbuildinfo
 
 # Misc
 *.pem
 *.key
 *.crt
+.npmrc
+.cloudflared/
+secrets/

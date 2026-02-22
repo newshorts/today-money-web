@@ -1,0 +1,187 @@
+generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "linux-arm64-openssl-1.1.x", "linux-arm64-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AmountSource {
+  PLAID_SUGGESTED
+  USER_OVERRIDDEN
+}
+
+enum PlaidItemStatus {
+  ACTIVE
+  DISCONNECTED
+}
+
+enum TransactionSource {
+  PLAID
+  MANUAL
+}
+
+enum BudgetImpact {
+  VARIABLE
+  FIXED_EXCLUDED
+  TRANSFER_EXCLUDED
+  INCOME_EXCLUDED
+  USER_EXCLUDED
+}
+
+enum HiddenReason {
+  USER
+  SUPERSEDED
+  PLAID_REMOVED
+}
+
+enum StreamDirection {
+  INFLOW
+  OUTFLOW
+}
+
+enum StreamFrequency {
+  UNKNOWN
+  WEEKLY
+  BIWEEKLY
+  SEMI_MONTHLY
+  MONTHLY
+  ANNUALLY
+}
+
+model User {
+  id              String               @id @default(uuid())
+  email           String               @unique
+  passwordHash    String
+  timezone        String               @default("America/Los_Angeles")
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  refreshSessions RefreshSession[]
+  budgetProfile   BudgetProfile?
+  plaidItems      PlaidItem[]
+  recurring       PlaidRecurringStream[]
+  transactions    Transaction[]
+}
+
+model RefreshSession {
+  id               String   @id @default(uuid())
+  userId           String
+  refreshTokenHash String   @unique
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model BudgetProfile {
+  userId             String       @id
+  currency           String       @default("USD")
+  incomeMonthlyCents BigInt
+  fixedMonthlyCents  BigInt
+  sourceIncome       AmountSource
+  sourceFixed        AmountSource
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model PlaidItem {
+  id                 String           @id @default(uuid())
+  userId             String
+  plaidItemId        String           @unique
+  accessTokenEnc     String
+  institutionId      String?
+  institutionName    String?
+  transactionsCursor String?
+  status             PlaidItemStatus  @default(ACTIVE)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  user       User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accounts   PlaidAccount[]
+  recurring  PlaidRecurringStream[]
+  txns       Transaction[]
+
+  @@index([userId, status])
+}
+
+model PlaidAccount {
+  id             String   @id @default(uuid())
+  itemId         String
+  plaidAccountId String   @unique
+  name           String
+  mask           String?
+  type           String?
+  subtype        String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  item PlaidItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+}
+
+model PlaidRecurringStream {
+  id                     String          @id @default(uuid())
+  userId                 String
+  itemId                 String
+  plaidStreamId          String          @unique
+  direction              StreamDirection
+  description            String
+  merchantName           String?
+  frequency              StreamFrequency
+  avgAmountCents         BigInt
+  lastAmountCents        BigInt
+  predictedNextDate      DateTime?
+  isActive               Boolean         @default(true)
+  countsTowardIncome     Boolean
+  countsTowardFixed      Boolean
+  userAmountOverrideCents BigInt?
+  createdAt              DateTime        @default(now())
+  updatedAt              DateTime        @updatedAt
+
+  user User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  item PlaidItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@index([userId, direction, isActive])
+}
+
+model Transaction {
+  id                   String            @id @default(uuid())
+  userId               String
+  source               TransactionSource
+  itemId               String?
+  accountId            String?
+  plaidTransactionId   String?           @unique
+  date                 DateTime
+  authorizedDate       DateTime?
+  effectiveDate        DateTime
+  amountCents          BigInt
+  currency             String            @default("USD")
+  pending              Boolean
+  pendingTransactionId String?
+  isSuperseded         Boolean           @default(false)
+  isRemovedByPlaid     Boolean           @default(false)
+  budgetImpact         BudgetImpact
+  userOverrideImpact   Boolean           @default(false)
+  isHidden             Boolean           @default(false)
+  hiddenReason         HiddenReason?
+  name                 String
+  merchantName         String?
+  categoryPrimary      String?
+  categoryDetailed     String?
+  userNote             String?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  item    PlaidItem?   @relation(fields: [itemId], references: [id], onDelete: SetNull)
+  @@index([userId, effectiveDate])
+  @@index([userId, isHidden])
+  @@index([userId, budgetImpact, effectiveDate])
+}

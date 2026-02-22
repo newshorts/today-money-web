@@ -1,2 +1,3 @@
-The website to introduce today.money to customers
-the backend API that allows the app to authenticate and use the Plaid API
+# today-money-web
+
+See `MASTER_OVERVIEW.md` for the complete build plan and Codex instructions.

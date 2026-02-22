@@ -259,6 +259,9 @@ Response:
 ### GET /transactions/month?year=YYYY&month=MM&includeHidden=false
 Returns all transactions (Plaid + manual) for a calendar month in user timezone.
 
+Field notes:
+- `authorizedDate` is nullable. It is often `null` for manual transactions and may be `null` for Plaid transactions that do not include an authorized date.
+
 Response:
 ```json
 {

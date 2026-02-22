@@ -52,6 +52,10 @@ async function main() {
   const items = await listPlaidItems(baseUrl, session.accessToken);
   const activeItems = items.filter((item) => item.status === "ACTIVE");
   assert(activeItems.length > 0, "Expected at least one ACTIVE plaid item after exchange");
+  for (const item of items) {
+    assert(Boolean(item.id), "plaid item missing id");
+    assert(Boolean(item.createdAt), "plaid item missing createdAt");
+  }
   pass("GET /api/v1/plaid/items");
 
   const sync = await runSyncWithRetry(baseUrl, session.accessToken, 6);
@@ -70,6 +74,7 @@ async function main() {
   });
   assert(suggestions.status === 200, `GET /budget/suggestions expected 200, got ${suggestions.status}`);
   assert(suggestions.body?.currency === "USD", "budget/suggestions currency must be USD");
+  assert(typeof suggestions.body?.available === "boolean", "budget/suggestions missing available flag");
   pass("GET /api/v1/budget/suggestions");
 
   const summary = await requestJson<{

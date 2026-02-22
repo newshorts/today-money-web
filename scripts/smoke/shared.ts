@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 
-import { randomUUID } from "crypto";
+import { spawnSync } from "child_process";
 
 import { PrismaClient } from "@prisma/client";
 import {
@@ -24,10 +24,17 @@ export type AuthSession = {
   refreshToken: string;
 };
 
-type Credentials = {
+export type SmokeCredentials = {
   email: string;
   password: string;
-  reusable: boolean;
+};
+
+export type ApiErrorBody = {
+  error?: {
+    code?: string;
+    message?: string;
+    details?: Record<string, unknown>;
+  };
 };
 
 type ApiResponse<T = unknown> = {
@@ -57,7 +64,20 @@ function mustGetEnv(name: string): string {
 }
 
 export function getApiBaseUrl(): string {
-  return process.env.API_BASE_URL || "https://today.money";
+  return (process.env.API_BASE_URL || "https://today.money").trim();
+}
+
+export function getApiBaseUrls(): string[] {
+  const list = (process.env.API_BASE_URLS || "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (list.length > 0) {
+    return list;
+  }
+
+  return [getApiBaseUrl()];
 }
 
 export function getWebhookCodes(): readonly (typeof WEBHOOK_CODES)[number][] {
@@ -70,6 +90,10 @@ export function step(title: string): void {
 
 export function pass(message: string): void {
   console.log(`PASS: ${message}`);
+}
+
+export function info(message: string): void {
+  console.log(`INFO: ${message}`);
 }
 
 export function fail(message: string): never {
@@ -88,28 +112,12 @@ export function assert(condition: unknown, message: string): asserts condition {
   }
 }
 
-export function getSmokeCredentials(prefix: string): Credentials {
-  const sharedEmail = process.env.SMOKE_EMAIL;
-  const sharedPassword = process.env.SMOKE_PASSWORD;
-
-  if (sharedEmail || sharedPassword) {
-    if (!sharedEmail || !sharedPassword) {
-      throw new Error("SMOKE_EMAIL and SMOKE_PASSWORD must both be provided");
-    }
-
-    return {
-      email: sharedEmail,
-      password: sharedPassword,
-      reusable: true,
-    };
-  }
-
-  const unique = randomUUID().replace(/-/g, "").slice(0, 16);
+export function getSmokeCredentials(prefix: string): SmokeCredentials {
+  const defaultEmail = `smoke.${prefix}@today.money`;
 
   return {
-    email: `${prefix}+${unique}@today.money`,
-    password: `Smoke-${unique}-A1!`,
-    reusable: false,
+    email: process.env.SMOKE_EMAIL || defaultEmail,
+    password: process.env.SMOKE_PASSWORD || "SmokePassword-2026!",
   };
 }
 
@@ -147,43 +155,51 @@ export function authHeaders(accessToken: string): HeadersInit {
   };
 }
 
+export async function registerUser(
+  baseUrl: string,
+  credentials: SmokeCredentials,
+): Promise<ApiResponse<AuthSession | ApiErrorBody>> {
+  return requestJson<AuthSession | ApiErrorBody>(baseUrl, "/api/v1/auth/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: credentials.email,
+      password: credentials.password,
+    }),
+  });
+}
+
+export async function loginUser(
+  baseUrl: string,
+  credentials: SmokeCredentials,
+): Promise<ApiResponse<AuthSession | ApiErrorBody>> {
+  return requestJson<AuthSession | ApiErrorBody>(baseUrl, "/api/v1/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: credentials.email,
+      password: credentials.password,
+    }),
+  });
+}
+
 export async function createOrLoginSession(baseUrl: string, prefix: string): Promise<AuthSession> {
   const credentials = getSmokeCredentials(prefix);
 
-  const registerResponse = await requestJson<AuthSession | { error: { code: string } }>(
-    baseUrl,
-    "/api/v1/auth/register",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: credentials.email,
-        password: credentials.password,
-      }),
-    },
-  );
-
-  if (registerResponse.status === 200 && registerResponse.body) {
-    pass(`Registered user ${credentials.email}`);
-    return registerResponse.body as AuthSession;
+  const registerResponse = await registerUser(baseUrl, credentials);
+  if (registerResponse.status === 200) {
+    pass(`Registered smoke user ${credentials.email}`);
+  } else if (registerResponse.status === 409) {
+    pass(`Smoke user already exists ${credentials.email}`);
+  } else {
+    fail(`Register failed unexpectedly (status ${registerResponse.status})`);
   }
 
-  if (registerResponse.status === 409 && credentials.reusable) {
-    const loginResponse = await requestJson<AuthSession>(baseUrl, "/api/v1/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: credentials.email,
-        password: credentials.password,
-      }),
-    });
+  const loginResponse = await loginUser(baseUrl, credentials);
+  assert(loginResponse.status === 200 && loginResponse.body, `Login failed (status ${loginResponse.status})`);
 
-    assert(loginResponse.status === 200 && loginResponse.body, "Login failed for reusable smoke user");
-    pass(`Logged in existing user ${credentials.email}`);
-    return loginResponse.body;
-  }
-
-  fail(`Unable to create session (status ${registerResponse.status})`);
+  pass(`Logged in smoke user ${credentials.email}`);
+  return loginResponse.body as AuthSession;
 }
 
 export function createPlaidClient(): PlaidApi {
@@ -337,4 +353,18 @@ export async function fireSandboxWebhook(
     webhook_code: WEBHOOK_CODE_MAP[code],
     webhook_type: WebhookType.Transactions,
   });
+}
+
+export function runScriptForBaseUrl(scriptName: string, baseUrl: string): void {
+  const child = spawnSync("npm", ["run", scriptName], {
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      API_BASE_URL: baseUrl,
+    },
+  });
+
+  if (child.status !== 0) {
+    throw new Error(`Script ${scriptName} failed for ${baseUrl} (exit ${child.status ?? -1})`);
+  }
 }

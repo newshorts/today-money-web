@@ -18,7 +18,9 @@
     "smoke:api": "node --import tsx ./scripts/smoke/api-smoke.ts",
     "smoke:plaid": "node --import tsx ./scripts/smoke/plaid-sandbox-smoke.ts",
     "smoke:webhook": "node --import tsx ./scripts/smoke/webhook-smoke.ts",
-    "smoke:all": "npm run smoke:api && npm run smoke:plaid && npm run smoke:webhook"
+    "smoke:gate": "npm run smoke:api && npm run smoke:plaid",
+    "smoke:all": "npm run smoke:gate && npm run smoke:webhook",
+    "smoke:matrix": "node --import tsx ./scripts/smoke/matrix-smoke.ts"
   },
   "dependencies": {
     "@node-rs/argon2": "^2.0.2",

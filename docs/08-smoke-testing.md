@@ -1,45 +1,116 @@
-# Smoke Testing Runbook
+# Deep Smoke Testing Runbook
 
-This runbook validates the today.money API and Plaid sandbox hookup from inside the `todaymoney` repo.
+This runbook validates the today.money API and Plaid sandbox integration from inside this repo.
 
-## Boundaries
+## Scope + Guardrails
 
-- Only run commands from `/Users/mike/Development/hosting/todaymoney`.
-- Do not modify Docker/cloudflared/Caddy/compose from this runbook.
-- Do not modify `Dockerfile.dev` as part of smoke testing.
+- Run from `/Users/mike/Development/hosting/todaymoney`.
+- No infra edits (docker compose, cloudflared, Caddy) from this runbook.
+- No Dockerfile modifications.
 
-## Prerequisites
+## Release Gate
 
-- App is running and reachable.
-- Database migration is applied.
-- `.env` contains valid auth, DB, and Plaid sandbox credentials.
-- Base URL is reachable from the runtime where tests are executed.
+Core gate command:
+
+```bash
+API_BASE_URL=https://today.money RUN_LIVE_PLAID_TESTS=true npm run smoke:gate
+```
+
+`smoke:gate` blocks release if either API deep smoke or Plaid sandbox core smoke fails.
 
 ## Environment Variables
 
-Required for all smoke scripts:
+Required:
 
-- `API_BASE_URL` (example: `https://today.money`)
+- `API_BASE_URL` (for single target)
 
-Optional user identity controls:
+Optional for domain matrix:
 
-- `SMOKE_EMAIL`
-- `SMOKE_PASSWORD`
+- `API_BASE_URLS` comma-separated list for `smoke:matrix`
 
-Plaid live controls:
+Smoke user (dedicated/repeatable):
 
-- `RUN_LIVE_PLAID_TESTS=true` to run plaid + webhook scripts
+- `SMOKE_EMAIL` (default `smoke.shared@today.money`)
+- `SMOKE_PASSWORD` (default `SmokePassword-2026!`)
+
+Plaid controls:
+
+- `RUN_LIVE_PLAID_TESTS=true` to execute Plaid + webhook scripts
 - `PLAID_SANDBOX_INSTITUTION_ID` (default `ins_109508`)
-- `SMOKE_PLAID_DISCONNECT=true` to disconnect linked items during cleanup
+- `SMOKE_PLAID_DISCONNECT=true` to disconnect linked item at end
 
-Webhook verification controls:
+Webhook controls:
 
 - `PLAID_WEBHOOK_VERIFICATION_EXPECTED=true` when backend verification is enabled
 - `RUN_SIGNED_WEBHOOK_TESTS=true` to fire signed sandbox webhooks
+- `RUN_WEBHOOK_TESTS=true` for matrix runs
 
-## Command Set
+## Layered Coverage
 
-Baseline checks:
+### Layer 1: Contract happy-path smoke (`smoke:api`)
+
+- `GET /api/v1/health`
+- `POST /api/v1/auth/register`
+- `POST /api/v1/auth/login` (always tested explicitly)
+- `GET/PATCH /api/v1/me`
+- `GET/PUT /api/v1/budget/profile`
+- `GET /api/v1/budget/suggestions`
+- `GET /api/v1/budget/summary`
+- `POST /api/v1/transactions/manual`
+- `GET /api/v1/transactions/month`
+- `PATCH/DELETE /api/v1/transactions/{id}`
+
+### Layer 2: Auth lifecycle + security (`smoke:api`)
+
+- duplicate register rejected
+- invalid login rejected
+- missing bearer rejected
+- invalid bearer rejected
+- refresh rotation success
+- old refresh token reuse rejected
+- post-logout refresh rejected
+
+### Layer 3: Budget + transaction integrity (`smoke:api`)
+
+- budget profile roundtrip
+- summary invariants present
+- hidden vs includeHidden month filtering
+- `authorizedDate` nullability assertion for manual transactions
+
+### Layer 4: Plaid sandbox core (`smoke:plaid`)
+
+- `POST /api/v1/plaid/link-token`
+- sandbox public token creation (server-driven)
+- `POST /api/v1/plaid/exchange-public-token`
+- `GET /api/v1/plaid/items`
+- `POST /api/v1/plaid/sync` with retry
+- `GET /api/v1/budget/suggestions`
+- `GET /api/v1/budget/summary`
+- optional disconnect flow
+
+### Layer 5: Webhook validation (`smoke:webhook`)
+
+Stage A:
+
+- unsigned direct `POST /api/v1/plaid/webhook` for:
+  - `SYNC_UPDATES_AVAILABLE`
+  - `RECURRING_TRANSACTIONS_UPDATE`
+
+Stage B (optional):
+
+- signed sandbox webhooks via Plaid fire endpoint
+- post-event health checks on plaid item listing
+
+### Layer 6: Domain execution matrix (`smoke:matrix`)
+
+- executes deep suite per base URL in `API_BASE_URLS`
+- runs API always
+- runs Plaid when `RUN_LIVE_PLAID_TESTS=true`
+- runs webhooks when `RUN_WEBHOOK_TESTS=true`
+
+## Commands
+
+Baseline static checks:
 
 ```bash
 npm run lint
@@ -47,25 +118,25 @@ npm run typecheck
 npm test
 ```
 
-API-only smoke:
+API deep smoke only:
 
 ```bash
 API_BASE_URL=https://today.money npm run smoke:api
 ```
 
-Plaid sandbox smoke:
+Plaid core smoke:
 
 ```bash
 API_BASE_URL=https://today.money RUN_LIVE_PLAID_TESTS=true npm run smoke:plaid
 ```
 
-Webhook smoke (verification off stage):
+Webhook smoke (verification off first):
 
 ```bash
 API_BASE_URL=https://today.money RUN_LIVE_PLAID_TESTS=true npm run smoke:webhook
 ```
 
-Webhook smoke (verification on stage):
+Webhook smoke (verification on + signed stage):
 
 ```bash
 API_BASE_URL=https://today.money \
@@ -75,45 +146,37 @@ RUN_SIGNED_WEBHOOK_TESTS=true \
 npm run smoke:webhook
 ```
 
-Full suite:
+Full gate:
+
+```bash
+API_BASE_URL=https://today.money RUN_LIVE_PLAID_TESTS=true npm run smoke:gate
+```
+
+All layers (single domain):
 
 ```bash
 API_BASE_URL=https://today.money RUN_LIVE_PLAID_TESTS=true npm run smoke:all
 ```
 
-## What Each Script Covers
+Matrix mode:
 
-- `smoke:api`
-- `/api/v1/health`
-- auth register/login/refresh/logout
-- profile get/patch
-- budget profile get/put + budget summary
-- manual transactions create/list/patch/delete
-
-- `smoke:plaid`
-- `/api/v1/plaid/link-token`
-- sandbox public token creation
-- `/api/v1/plaid/exchange-public-token`
-- `/api/v1/plaid/items`
-- `/api/v1/plaid/sync` (with retry)
-- `/api/v1/budget/suggestions`
-- `/api/v1/budget/summary`
-
-- `smoke:webhook`
-- unsigned direct webhook POST for sync/recurring webhook codes
-- optional signed webhook fire from Plaid sandbox
-- optional item disconnect cleanup
+```bash
+API_BASE_URLS="https://today.money,https://your-other-host" \
+RUN_LIVE_PLAID_TESTS=true \
+RUN_WEBHOOK_TESTS=true \
+npm run smoke:matrix
+```
 
 ## Failure Triage
 
-- `Could not resolve host` / connection refused:
-- test runner environment cannot reach `API_BASE_URL`.
+- `ENOTFOUND` / connection refused:
+- the test runner cannot reach the provided base URL.
 
-- `401` on unsigned webhook when verification expected is false:
+- `401` on unsigned webhook when verification is not expected:
 - backend likely has `PLAID_WEBHOOK_VERIFICATION=true`.
 
-- `500` during `/plaid/sync` shortly after exchange:
-- Plaid transactions data may not be ready yet; script retries automatically.
+- `500` after exchange during sync:
+- Plaid data may still be settling; sync retry path should absorb this.
 
 - signed webhook stage fails while unsigned passes:
-- check Plaid credentials, sandbox mode, and verification configuration.
+- investigate Plaid credentials, webhook verification env, and tunnel delivery.

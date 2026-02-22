@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 
 import { registerSchema } from "@/contracts/schemas";
 import { createRefreshSession, hashPassword, signAccessToken } from "@/lib/auth";
@@ -17,7 +18,12 @@ export async function POST(req: Request) {
       throw new ApiError(409, "EMAIL_IN_USE", "Email is already registered");
     }
 
-    const passwordHash = await hashPassword(body.password);
+    let passwordHash: string;
+    try {
+      passwordHash = await hashPassword(body.password);
+    } catch {
+      throw new ApiError(500, "PASSWORD_HASH_FAILED", "Password hashing failed");
+    }
 
     const user = await prisma.user.create({
       data: {
@@ -45,6 +51,15 @@ export async function POST(req: Request) {
       refreshToken,
     });
   } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002" &&
+      Array.isArray(error.meta?.target) &&
+      error.meta?.target.includes("email")
+    ) {
+      return toErrorResponse(new ApiError(409, "EMAIL_IN_USE", "Email is already registered"));
+    }
+
     return toErrorResponse(error);
   }
 }
